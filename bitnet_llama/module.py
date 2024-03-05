@@ -17,6 +17,10 @@ class BitLinearNaive(nn.Linear):
         binarized_weights = torch.sign(self.weight - alpha)
         return binarized_weights
 
+    def binarize_weights_158(self):
+        binarized_weights_158 = torch.clamp(self.weight/(self.weight.abs().mean()+self.eps), -1, 1)
+        return binarized_weights_158
+        
     def quantize_activations(self, x, b=8):
         Q_b = 2 ** (b - 1)
         gamma = x.abs().max()
@@ -36,7 +40,7 @@ class BitLinearNaive(nn.Linear):
 
     def forward(self, input):
         # Binarize weights
-        binarized_weights = self.binarize_weights()
+        binarized_weights = self.binarize_weights_158()
 
         # Normal linear transformation with binarized weights
         output = torch.nn.functional.linear(input, binarized_weights, self.bias)
@@ -64,6 +68,12 @@ class BitLinear(nn.Linear):
         binarized_x = (binarized_x - x).detach() + x
         return binarized_x
 
+    def ste_binarize_158(self,x):
+        binarized_x_158 = torch.clamp(x/(x.abs().mean()+self.eps), -1, 1)
+        # Use STE: during backward pass, we bypass the binarization
+        binarized_x = (binarized_x_158 - x).detach() + x
+        return binarized_x
+        
     def binarize_weights_groupwise(self):
         # Divide weights into groups
         group_size = self.weight.shape[0] // self.num_groups
@@ -75,11 +85,14 @@ class BitLinear(nn.Linear):
             weight_group = self.weight[start_idx:end_idx]
 
             # Binarize each group using STE
-            alpha_g = weight_group.mean()
+            ''' alpha_g = weight_group.mean()
             binarized_weights[start_idx:end_idx] = self.ste_binarize(
                 weight_group - alpha_g
-            )
-
+            )'''
+             
+            #Binarize each group using STE_158
+            binarized_weights[start_idx:end_idx] = self.ste_binarize_158(weight_group)
+        
         return binarized_weights
 
     def quantize_activations_groupwise(self, x, b=8):
@@ -123,10 +136,16 @@ class BitLinearOptimized(nn.Linear):
         self.num_groups = num_groups
         self.eps = 1e-5
 
-        # Initialize 1-bit quantized weights and store them as int8
-        self.register_buffer(
+        # Initialize 1-bit quantized weights and store them as int8 w/o 158
+        '''self.register_buffer(
             "quantized_weights", torch.sign(self.weight.data).to(torch.int8)
+        )'''
+
+        # Initialize 1-bit quantized weights and store them as int8 w/ 158
+        self.register_buffer(
+            "quantized_weights", torch.clamp(self.weight/(self.weight.abs().mean()+self.eps), -1, 1).to(torch.int8)
         )
+        
         # Clear the original weights to save memory
         del self.weight
 
@@ -137,8 +156,12 @@ class BitLinearOptimized(nn.Linear):
 
     @weight.setter
     def weight(self, value):
-        # Update the quantized_weights when the weight property is set
-        self.quantized_weights.data = torch.sign(value).to(torch.int8)
+        # Update the quantized_weights when the weight property is set w/o 158
+        // self.quantized_weights.data = torch.sign(value).to(torch.int8)
+
+        # Update the quantized_weights when the weight property is set w/ 158
+        self.quantized_weights.data = torch.clamp(value/(value.abs().mean()+self.eps), -1, 1).to(torch.int8)
+            
 
     def dequantize_weights(self):
         # Convert quantized_weights back to bfloat16 and compute alpha for the weights
@@ -153,6 +176,13 @@ class BitLinearOptimized(nn.Linear):
         binarized_x = (binarized_x - x).detach() + x
         return binarized_x
 
+    def ste_binarize_158(self,x):
+        binarized_x_158 = torch.clamp(x/(x.abs().mean()+self.eps), -1, 1)
+        # Use STE: during backward pass, we bypass the binarization
+        binarized_x = (binarized_x_158 - x).detach() + x
+        return binarized_x
+
+    
     def binarize_weights_groupwise(self):
         # Dequantize the weights before binarization
         weights = self.dequantize_weights()
@@ -168,7 +198,7 @@ class BitLinearOptimized(nn.Linear):
 
             # Binarize each group using STE
             alpha_g = weight_group.mean()
-            binarized_weights[start_idx:end_idx] = self.ste_binarize(
+            binarized_weights[start_idx:end_idx] = self.ste_binarize_158(
                 weight_group - alpha_g
             )
 
