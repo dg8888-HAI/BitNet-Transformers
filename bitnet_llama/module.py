@@ -157,7 +157,7 @@ class BitLinearOptimized(nn.Linear):
     @weight.setter
     def weight(self, value):
         # Update the quantized_weights when the weight property is set w/o 158
-        # self.quantized_weights.data = torch.sign(value).to(torch.int8)
+        ''' self.quantized_weights.data = torch.sign(value).to(torch.int8)''' 
 
         # Update the quantized_weights when the weight property is set w/ 158
         self.quantized_weights.data = torch.clamp(value/(value.abs().mean()+self.eps), -1, 1).to(torch.int8)
